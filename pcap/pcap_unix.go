@@ -5,8 +5,8 @@
 // that can be found in the LICENSE file in the root of the source
 // tree.
 //
-//go:build !windows
-// +build !windows
+//go:build !windows && !aix
+// +build !windows,!aix
 
 package pcap
 
@@ -720,4 +720,64 @@ func openOfflineFile(file *os.File) (handle *Handle, err error) {
 		return nil, errors.New(C.GoString(buf))
 	}
 	return &Handle{cptr: cptr}, nil
+}
+
+func findalladdresses(addresses pcapAddresses) (retval []InterfaceAddress) {
+	// TODO - make it support more than IPv4 and IPv6?
+	retval = make([]InterfaceAddress, 0, 1)
+	for addresses.next() {
+		// Strangely, it appears that in some cases, we get a pcap address back from
+		// pcap_findalldevs with a nil .addr.  It appears that we can skip over
+		// these.
+		if addresses.addr() == nil {
+			continue
+		}
+		var a InterfaceAddress
+		var err error
+		if a.IP, err = sockaddrToIP(addresses.addr()); err != nil {
+			continue
+		}
+		// To be safe, we'll also check for netmask.
+		if addresses.netmask() == nil {
+			continue
+		}
+		if a.Netmask, err = sockaddrToIP(addresses.netmask()); err != nil {
+			// If we got an IP address but we can't get a netmask, just return the IP
+			// address.
+			a.Netmask = nil
+		}
+		if a.Broadaddr, err = sockaddrToIP(addresses.broadaddr()); err != nil {
+			a.Broadaddr = nil
+		}
+		if a.P2P, err = sockaddrToIP(addresses.dstaddr()); err != nil {
+			a.P2P = nil
+		}
+		retval = append(retval, a)
+	}
+	return
+}
+
+func sockaddrToIP(rsa *syscall.RawSockaddr) (IP []byte, err error) {
+	if rsa == nil {
+		err = errors.New("Value not set")
+		return
+	}
+	switch rsa.Family {
+	case syscall.AF_INET:
+		pp := (*syscall.RawSockaddrInet4)(unsafe.Pointer(rsa))
+		IP = make([]byte, 4)
+		for i := 0; i < len(IP); i++ {
+			IP[i] = pp.Addr[i]
+		}
+		return
+	case syscall.AF_INET6:
+		pp := (*syscall.RawSockaddrInet6)(unsafe.Pointer(rsa))
+		IP = make([]byte, 16)
+		for i := 0; i < len(IP); i++ {
+			IP[i] = pp.Addr[i]
+		}
+		return
+	}
+	err = errors.New("Unsupported address type")
+	return
 }
