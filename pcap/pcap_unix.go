@@ -14,7 +14,6 @@ import (
 	"errors"
 	"os"
 	"sync"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -31,6 +30,7 @@ import (
 #cgo openbsd LDFLAGS: -lpcap
 #cgo netbsd LDFLAGS: -lpcap
 #cgo darwin LDFLAGS: -lpcap
+#cgo aix LDFLAGS: -lpcap
 #include <stdlib.h>
 #include <pcap.h>
 #include <stdint.h>
@@ -480,41 +480,6 @@ func (p pcapDevices) description() string {
 
 func (p pcapDevices) flags() uint32 {
 	return uint32(p.cur.flags)
-}
-
-type pcapAddresses struct {
-	all, cur *C.pcap_addr_t
-}
-
-func (p *pcapAddresses) next() bool {
-	if p.cur == nil {
-		p.cur = p.all
-		if p.cur == nil {
-			return false
-		}
-		return true
-	}
-	if p.cur.next == nil {
-		return false
-	}
-	p.cur = p.cur.next
-	return true
-}
-
-func (p pcapAddresses) addr() *syscall.RawSockaddr {
-	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.addr))
-}
-
-func (p pcapAddresses) netmask() *syscall.RawSockaddr {
-	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.netmask))
-}
-
-func (p pcapAddresses) broadaddr() *syscall.RawSockaddr {
-	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.broadaddr))
-}
-
-func (p pcapAddresses) dstaddr() *syscall.RawSockaddr {
-	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.dstaddr))
 }
 
 func (p pcapDevices) addresses() pcapAddresses {
