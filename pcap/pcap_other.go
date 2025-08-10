@@ -3,16 +3,11 @@
 
 package pcap
 
-import "C"
 import (
 	"errors"
 	"syscall"
 	"unsafe"
 )
-
-type pcapAddresses struct {
-	all, cur *C.pcap_addr_t
-}
 
 func (p *pcapAddresses) next() bool {
 	if p.cur == nil {

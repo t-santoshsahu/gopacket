@@ -482,6 +482,10 @@ func (p pcapDevices) flags() uint32 {
 	return uint32(p.cur.flags)
 }
 
+type pcapAddresses struct {
+	all, cur *C.pcap_addr_t
+}
+
 func (p pcapDevices) addresses() pcapAddresses {
 	return pcapAddresses{all: p.cur.addresses}
 }
