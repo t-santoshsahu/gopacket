@@ -26,6 +26,7 @@ import (
 /*
 #cgo aix LDFLAGS: -lpcap
 #include <stdlib.h>
+#include <net/bpf.h>
 #include <pcap.h>
 #include <stdint.h>
 #include <poll.h>
