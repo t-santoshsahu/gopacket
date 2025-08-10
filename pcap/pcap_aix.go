@@ -330,7 +330,7 @@ func pcapBpfProgramFromInstructions(bpfInstructions []BPFInstruction) pcapBpfPro
 		gbpfInsns[i].code = C.u_short(v.Code)
 		gbpfInsns[i].jt = C.u_char(v.Jt)
 		gbpfInsns[i].jf = C.u_char(v.Jf)
-		gbpfInsns[i].k = C.bpf_u_int32(v.K)
+		gbpfInsns[i].k = C.type_int(C.bpf_u_int32(v.K))
 	}
 
 	bpf.bf_insns = (*C.struct_bpf_insn)(cbpfInsns)
