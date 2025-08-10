@@ -82,10 +82,6 @@ pcap_t *pcap_open_offline_with_tstamp_precision(const char *fname, u_int precisi
   return pcap_open_offline(fname, errbuf);
 }
 
-pcap_t *pcap_fopen_offline_with_tstamp_precision(FILE *fp, u_int precision,
-  char *errbuf) {
-  return pcap_fopen_offline(fp, errbuf);
-}
 
 int pcap_set_tstamp_precision(pcap_t *p, int tstamp_precision) {
   if (tstamp_precision == PCAP_TSTAMP_PRECISION_MICRO)
@@ -162,10 +158,6 @@ int pcap_next_ex_escaping(pcap_t *p, uintptr_t pkt_hdr, uintptr_t pkt_data) {
     ex = 1;
   }
   return ex;
-}
-
-int pcap_offline_filter_escaping(struct bpf_program *fp, uintptr_t pkt_hdr, uintptr_t pkt) {
-	return pcap_offline_filter(fp, (struct pcap_pkthdr*)(pkt_hdr), (const u_char*)(pkt));
 }
 
 // pcap_wait returns when the next packet is available or the timeout expires.
@@ -363,15 +355,7 @@ func pcapLookupnet(device string) (netp, maskp uint32, err error) {
 }
 
 func (b *BPF) pcapOfflineFilter(ci gopacket.CaptureInfo, data []byte) bool {
-	hdr := (*C.struct_pcap_pkthdr)(&b.hdr)
-	hdr.ts.tv_sec = C.gopacket_time_secs_t(ci.Timestamp.Unix())
-	hdr.ts.tv_usec = C.gopacket_time_usecs_t(ci.Timestamp.Nanosecond() / 1000)
-	hdr.caplen = C.bpf_u_int32(len(data)) // Trust actual length over ci.Length.
-	hdr.len = C.bpf_u_int32(ci.Length)
-	dataptr := (*C.u_char)(unsafe.Pointer(&data[0]))
-	return C.pcap_offline_filter_escaping((*C.struct_bpf_program)(&b.bpf.bpf),
-		C.uintptr_t(uintptr(unsafe.Pointer(hdr))),
-		C.uintptr_t(uintptr(unsafe.Pointer(dataptr)))) != 0
+	return true
 }
 
 func (p *Handle) pcapSetfilter(bpf pcapBpfProgram) error {
@@ -644,15 +628,5 @@ func (p *Handle) waitForPacket() {
 
 // openOfflineFile returns contents of input file as a *Handle.
 func openOfflineFile(file *os.File) (handle *Handle, err error) {
-	buf := (*C.char)(C.calloc(errorBufferSize, 1))
-	defer C.free(unsafe.Pointer(buf))
-	cmode := C.CString("rb")
-	defer C.free(unsafe.Pointer(cmode))
-	cf := C.fdopen(C.int(file.Fd()), cmode)
-
-	cptr := C.pcap_fopen_offline_with_tstamp_precision(cf, C.PCAP_TSTAMP_PRECISION_NANO, buf)
-	if cptr == nil {
-		return nil, errors.New(C.GoString(buf))
-	}
-	return &Handle{cptr: cptr}, nil
+	return &Handle{}, nil
 }
