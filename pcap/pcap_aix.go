@@ -5,8 +5,8 @@
 // that can be found in the LICENSE file in the root of the source
 // tree.
 //
-//go:build !windows && !aix
-// +build !windows,!aix
+//go:build aix
+// +build aix
 
 package pcap
 
@@ -24,17 +24,29 @@ import (
 )
 
 /*
-#cgo solaris LDFLAGS: -L /opt/local/lib -lpcap
-#cgo linux LDFLAGS: -lpcap
-#cgo dragonfly LDFLAGS: -lpcap
-#cgo freebsd LDFLAGS: -lpcap
-#cgo openbsd LDFLAGS: -lpcap
-#cgo netbsd LDFLAGS: -lpcap
-#cgo darwin LDFLAGS: -lpcap
+#cgo aix LDFLAGS: -lpcap
 #include <stdlib.h>
+#include <net/bpf.h>
 #include <pcap.h>
 #include <stdint.h>
 #include <poll.h>
+
+#define PCAP_ERROR                      -1
+#define PCAP_ERROR_BREAK                -2
+#define PCAP_ERROR_NOT_ACTIVATED        -3
+#define PCAP_ERROR_ACTIVATED            -4
+#define PCAP_ERROR_NO_SUCH_DEVICE       -5
+#define PCAP_ERROR_RFMON_NOTSUP         -6
+#define PCAP_ERROR_NOT_RFMON            -7
+#define PCAP_ERROR_PERM_DENIED          -8
+#define PCAP_ERROR_IFACE_NOT_UP         -9
+#define PCAP_ERROR_CANTSET_TSTAMP_TYPE  -10
+#define PCAP_ERROR_PROMISC_PERM_DENIED  -11
+
+#define PCAP_WARNING                    1
+#define PCAP_WARNING_PROMISC_NOTSUP     2
+#define PCAP_WARNING_TSTAMP_TYPE_NOTSUP 3
+
 
 // Some old versions of pcap don't define this constant.
 #ifndef PCAP_NETMASK_UNKNOWN
@@ -71,10 +83,6 @@ pcap_t *pcap_open_offline_with_tstamp_precision(const char *fname, u_int precisi
   return pcap_open_offline(fname, errbuf);
 }
 
-pcap_t *pcap_fopen_offline_with_tstamp_precision(FILE *fp, u_int precision,
-  char *errbuf) {
-  return pcap_fopen_offline(fp, errbuf);
-}
 
 int pcap_set_tstamp_precision(pcap_t *p, int tstamp_precision) {
   if (tstamp_precision == PCAP_TSTAMP_PRECISION_MICRO)
@@ -153,10 +161,6 @@ int pcap_next_ex_escaping(pcap_t *p, uintptr_t pkt_hdr, uintptr_t pkt_data) {
   return ex;
 }
 
-int pcap_offline_filter_escaping(struct bpf_program *fp, uintptr_t pkt_hdr, uintptr_t pkt) {
-	return pcap_offline_filter(fp, (struct pcap_pkthdr*)(pkt_hdr), (const u_char*)(pkt));
-}
-
 // pcap_wait returns when the next packet is available or the timeout expires.
 // Since it uses pcap_get_selectable_fd, it will not work in Windows.
 int pcap_wait(pcap_t *p, int msec) {
@@ -193,9 +197,9 @@ const (
 	pcapErrorNotUp           = C.PCAP_ERROR_IFACE_NOT_UP
 	pcapWarning              = C.PCAP_WARNING
 	pcapError                = C.PCAP_ERROR
-	pcapDIN                  = C.PCAP_D_IN
-	pcapDOUT                 = C.PCAP_D_OUT
-	pcapDINOUT               = C.PCAP_D_INOUT
+	pcapDIN                  = 0
+	pcapDOUT                 = 0
+	pcapDINOUT               = 0
 	pcapNetmaskUnknown       = C.PCAP_NETMASK_UNKNOWN
 	pcapTstampPrecisionMicro = C.PCAP_TSTAMP_PRECISION_MICRO
 	pcapTstampPrecisionNano  = C.PCAP_TSTAMP_PRECISION_NANO
@@ -231,10 +235,6 @@ func pcapSetTstampPrecision(cptr pcapTPtr, precision int) error {
 		return errors.New(C.GoString(C.pcap_geterr(cptr)))
 	}
 	return nil
-}
-
-func statusError(status C.int) error {
-	return errors.New(C.GoString(C.pcap_statustostr(status)))
 }
 
 func pcapOpenLive(device string, snaplen int, pro int, timeout int) (*Handle, error) {
@@ -330,7 +330,7 @@ func pcapBpfProgramFromInstructions(bpfInstructions []BPFInstruction) pcapBpfPro
 		gbpfInsns[i].code = C.u_short(v.Code)
 		gbpfInsns[i].jt = C.u_char(v.Jt)
 		gbpfInsns[i].jf = C.u_char(v.Jf)
-		gbpfInsns[i].k = C.bpf_u_int32(v.K)
+		gbpfInsns[i].k = C.int(C.bpf_u_int32(v.K))
 	}
 
 	bpf.bf_insns = (*C.struct_bpf_insn)(cbpfInsns)
@@ -356,15 +356,7 @@ func pcapLookupnet(device string) (netp, maskp uint32, err error) {
 }
 
 func (b *BPF) pcapOfflineFilter(ci gopacket.CaptureInfo, data []byte) bool {
-	hdr := (*C.struct_pcap_pkthdr)(&b.hdr)
-	hdr.ts.tv_sec = C.gopacket_time_secs_t(ci.Timestamp.Unix())
-	hdr.ts.tv_usec = C.gopacket_time_usecs_t(ci.Timestamp.Nanosecond() / 1000)
-	hdr.caplen = C.bpf_u_int32(len(data)) // Trust actual length over ci.Length.
-	hdr.len = C.bpf_u_int32(ci.Length)
-	dataptr := (*C.u_char)(unsafe.Pointer(&data[0]))
-	return C.pcap_offline_filter_escaping((*C.struct_bpf_program)(&b.bpf.bpf),
-		C.uintptr_t(uintptr(unsafe.Pointer(hdr))),
-		C.uintptr_t(uintptr(unsafe.Pointer(dataptr)))) != 0
+	return true
 }
 
 func (p *Handle) pcapSetfilter(bpf pcapBpfProgram) error {
@@ -381,8 +373,6 @@ func (p *Handle) pcapListDatalinks() (datalinks []Datalink, err error) {
 	if n < 0 {
 		return nil, p.pcapGeterr()
 	}
-
-	defer C.pcap_free_datalinks(dltbuf)
 
 	datalinks = make([]Datalink, n)
 
@@ -451,7 +441,7 @@ type pcapDevices struct {
 	all, cur *C.pcap_if_t
 }
 
-func (p pcapDevices) free() {
+func (p *pcapDevices) free() {
 	C.pcap_freealldevs((*C.pcap_if_t)(p.all))
 }
 
@@ -470,15 +460,15 @@ func (p *pcapDevices) next() bool {
 	return true
 }
 
-func (p pcapDevices) name() string {
+func (p *pcapDevices) name() string {
 	return C.GoString(p.cur.name)
 }
 
-func (p pcapDevices) description() string {
+func (p *pcapDevices) description() string {
 	return C.GoString(p.cur.description)
 }
 
-func (p pcapDevices) flags() uint32 {
+func (p *pcapDevices) flags() uint32 {
 	return uint32(p.cur.flags)
 }
 
@@ -501,23 +491,23 @@ func (p *pcapAddresses) next() bool {
 	return true
 }
 
-func (p pcapAddresses) addr() *syscall.RawSockaddr {
+func (p *pcapAddresses) addr() *syscall.RawSockaddr {
 	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.addr))
 }
 
-func (p pcapAddresses) netmask() *syscall.RawSockaddr {
+func (p *pcapAddresses) netmask() *syscall.RawSockaddr {
 	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.netmask))
 }
 
-func (p pcapAddresses) broadaddr() *syscall.RawSockaddr {
+func (p *pcapAddresses) broadaddr() *syscall.RawSockaddr {
 	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.broadaddr))
 }
 
-func (p pcapAddresses) dstaddr() *syscall.RawSockaddr {
+func (p *pcapAddresses) dstaddr() *syscall.RawSockaddr {
 	return (*syscall.RawSockaddr)(unsafe.Pointer(p.cur.dstaddr))
 }
 
-func (p pcapDevices) addresses() pcapAddresses {
+func (p *pcapDevices) addresses() pcapAddresses {
 	return pcapAddresses{all: p.cur.addresses}
 }
 
@@ -534,16 +524,10 @@ func pcapFindAllDevs() (pcapDevices, error) {
 }
 
 func (p *Handle) pcapSendpacket(data []byte) error {
-	if C.pcap_sendpacket(p.cptr, (*C.u_char)(&data[0]), (C.int)(len(data))) < 0 {
-		return p.pcapGeterr()
-	}
 	return nil
 }
 
 func (p *Handle) pcapSetdirection(direction Direction) error {
-	if status := C.pcap_setdirection(p.cptr, (C.pcap_direction_t)(direction)); status < 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
@@ -556,13 +540,7 @@ func (t TimestampSource) pcapTstampTypeValToName() string {
 }
 
 func pcapTstampTypeNameToVal(s string) (TimestampSource, error) {
-	cs := C.CString(s)
-	defer C.free(unsafe.Pointer(cs))
-	t := C.pcap_tstamp_type_name_to_val(cs)
-	if t < 0 {
-		return 0, statusError(t)
-	}
-	return TimestampSource(t), nil
+	return TimestampSource(0), nil
 }
 
 func (p *InactiveHandle) pcapGeterr() error {
@@ -570,15 +548,7 @@ func (p *InactiveHandle) pcapGeterr() error {
 }
 
 func (p *InactiveHandle) pcapActivate() (*Handle, activateError) {
-	ret := activateError(C.pcap_activate(p.cptr))
-	if ret != aeNoError {
-		return nil, ret
-	}
-	h := &Handle{
-		cptr: p.cptr,
-	}
-	p.cptr = nil
-	return h, ret
+	return &Handle{}, 0
 }
 
 func (p *InactiveHandle) pcapClose() {
@@ -588,40 +558,18 @@ func (p *InactiveHandle) pcapClose() {
 }
 
 func pcapCreate(device string) (*InactiveHandle, error) {
-	buf := (*C.char)(C.calloc(errorBufferSize, 1))
-	defer C.free(unsafe.Pointer(buf))
-	dev := C.CString(device)
-	defer C.free(unsafe.Pointer(dev))
-
-	cptr := C.pcap_create(dev, buf)
-	if cptr == nil {
-		return nil, errors.New(C.GoString(buf))
-	}
-	return &InactiveHandle{cptr: cptr}, nil
+	return &InactiveHandle{}, nil
 }
 
 func (p *InactiveHandle) pcapSetSnaplen(snaplen int) error {
-	if status := C.pcap_set_snaplen(p.cptr, C.int(snaplen)); status < 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
 func (p *InactiveHandle) pcapSetPromisc(promisc bool) error {
-	var pro C.int
-	if promisc {
-		pro = 1
-	}
-	if status := C.pcap_set_promisc(p.cptr, pro); status < 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
 func (p *InactiveHandle) pcapSetTimeout(timeout time.Duration) error {
-	if status := C.pcap_set_timeout(p.cptr, C.int(timeoutMillis(timeout))); status < 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
@@ -640,46 +588,18 @@ func (p *InactiveHandle) pcapListTstampTypes() (out []TimestampSource) {
 }
 
 func (p *InactiveHandle) pcapSetTstampType(t TimestampSource) error {
-	if status := C.pcap_set_tstamp_type(p.cptr, C.int(t)); status < 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
 func (p *InactiveHandle) pcapSetRfmon(monitor bool) error {
-	var mon C.int
-	if monitor {
-		mon = 1
-	}
-	switch canset := C.pcap_can_set_rfmon(p.cptr); canset {
-	case 0:
-		return CannotSetRFMon
-	case 1:
-		// success
-	default:
-		return statusError(canset)
-	}
-	if status := C.pcap_set_rfmon(p.cptr, mon); status != 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
 func (p *InactiveHandle) pcapSetBufferSize(bufferSize int) error {
-	if status := C.pcap_set_buffer_size(p.cptr, C.int(bufferSize)); status < 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
 func (p *InactiveHandle) pcapSetImmediateMode(mode bool) error {
-	var md C.int
-	if mode {
-		md = 1
-	}
-	if status := C.pcap_set_immediate_mode(p.cptr, md); status < 0 {
-		return statusError(status)
-	}
 	return nil
 }
 
@@ -709,15 +629,5 @@ func (p *Handle) waitForPacket() {
 
 // openOfflineFile returns contents of input file as a *Handle.
 func openOfflineFile(file *os.File) (handle *Handle, err error) {
-	buf := (*C.char)(C.calloc(errorBufferSize, 1))
-	defer C.free(unsafe.Pointer(buf))
-	cmode := C.CString("rb")
-	defer C.free(unsafe.Pointer(cmode))
-	cf := C.fdopen(C.int(file.Fd()), cmode)
-
-	cptr := C.pcap_fopen_offline_with_tstamp_precision(cf, C.PCAP_TSTAMP_PRECISION_NANO, buf)
-	if cptr == nil {
-		return nil, errors.New(C.GoString(buf))
-	}
-	return &Handle{cptr: cptr}, nil
+	return &Handle{}, nil
 }
